@@ -10,6 +10,7 @@ rand = "0.8"
 ark-std = { version = "0.3.0", features = ["print-trace"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
+num-bigint = { version = "0.4", features = ["rand"] }
 log = "0.4"
 env_logger = "0.10"
 clap = { version = "4.1", features = ["derive"] }
@@ -30,6 +31,7 @@ snark-verifier-sdk = { git = "https://github.com/axiom-crypto/snark-verifier.git
 [dev-dependencies]
 test-log = "0.2.11"
 ethers-core = "2.0.6"
+
 
 [features]
 default = []

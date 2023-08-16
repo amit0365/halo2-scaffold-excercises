@@ -1,7 +1,7 @@
 //! This module contains helper functions to handle some common setup to convert the `some_algorithm_in_zk` function in the examples into a Halo2 circuit.
 //! These functions are not quite general enough to place into `halo2-lib` yet, so they are just some internal helpers for this crate only for now.
 //! We recommend not reading this module on first (or second) pass.
-// use ark_std::{end_timer, start_timer};
+use ark_std::{end_timer, start_timer};
 use axiom_eth::{
     keccak::FnSynthesize,
     util::{
@@ -11,7 +11,7 @@ use axiom_eth::{
 };
 use halo2_base::{
     gates::builder::{
-        CircuitBuilderStage, GateThreadBuilder, MultiPhaseThreadBreakPoints, RangeCircuitBuilder,
+        CircuitBuilderStage, GateCircuitBuilder, GateThreadBuilder, MultiPhaseThreadBreakPoints, RangeCircuitBuilder,
         RangeWithInstanceCircuitBuilder, RangeWithInstanceConfig,
     },
     halo2_proofs::{
@@ -48,6 +48,61 @@ use self::cmd::{Cli, SnarkCmd};
 
 pub mod cmd;
 ///! The functions below are generic scaffolding functions to create circuits with 'halo2-lib'
+
+/// Creates a circuit and runs the Halo2 `MockProver` on it. Will print out errors if the circuit does not pass.
+///
+/// This requires an environment variable `DEGREE` to be set, which limits the number of rows of the circuit to 2<sup>DEGREE</sup>.
+pub fn mock<T>(f: impl FnOnce(&mut Context<Fr>, T), private_inputs: T) {
+    let k = var("DEGREE").unwrap_or_else(|_| "18".to_string()).parse().unwrap();
+    // we use env var `LOOKUP_BITS` to determine whether to use `GateThreadBuilder` or `RangeCircuitBuilder`. The difference is that the latter creates a lookup table with 2^LOOKUP_BITS rows, while the former does not.
+    let lookup_bits: Option<usize> = var("LOOKUP_BITS")
+        .map(|str| {
+            let lookup_bits = str.parse().unwrap();
+            // we use a lookup table with 2^LOOKUP_BITS rows. Due to blinding factors, we need a little more than 2^LOOKUP_BITS rows total in our circuit
+            assert!(lookup_bits < k, "LOOKUP_BITS needs to be less than DEGREE");
+            lookup_bits
+        })
+        .ok();
+
+    // we initiate a "thread builder" in mockprover mode. This is what keeps track of the execution trace of our program and the ZK constraints so we can do some post-processing optimization after witness generation
+    let mut builder = GateThreadBuilder::mock();
+    // builder.main(phase) gets a default "main" thread for the given phase. For most purposes we only need to think about phase 0
+    // we need a 64-bit number as input in this case
+    // while `some_algorithm_in_zk` was written generically for any field `F`, in practice we use the scalar field of the BN254 curve because that's what the proving system backend uses
+    f(builder.main(0), private_inputs);
+
+    // now `builder` contains the execution trace, and we are ready to actually create the circuit
+    // minimum rows is the number of rows used for blinding factors. This depends on the circuit itself, but we can guess the number and change it if something breaks (default 9 usually works)
+    let minimum_rows = var("MINIMUM_ROWS").unwrap_or_else(|_| "9".to_string()).parse().unwrap();
+    // auto-tune circuit
+    builder.config(k, Some(minimum_rows));
+
+    let time = start_timer!(|| "Mock prover");
+    if lookup_bits.is_some() {
+        // create circuit
+        let circuit = RangeCircuitBuilder::mock(builder);
+
+        // we don't have any public inputs for now
+        MockProver::run(k as u32, &circuit, vec![]).unwrap().assert_satisfied();
+    } else {
+        // create circuit
+        let circuit = GateCircuitBuilder::mock(builder);
+
+        // we don't have any public inputs for now
+        MockProver::run(k as u32, &circuit, vec![]).unwrap().assert_satisfied();
+    }
+    end_timer!(time);
+    println!("Mock prover passed!");
+}
+
+/// Creates a circuit and runs the full Halo2 proving process on it.
+/// Will time the generation of verify key & proving key. It will then run the prover on the given circuit.
+/// Finally the verifier will verify the proof. The verifier will panic if the proof is invalid.
+///
+/// Warning: This may be memory and compute intensive.
+///
+/// * `private_inputs` are the private inputs you want to prove a computation on.
+/// * `dummy_inputs` are some dummy private inputs, in the correct format for your circuit, that should be used just for proving key generation. They can be the same as `private_inputs` for testing, but in production the proving key is generated only once, so `dummy_inputs` is usually different from `private_inputs` and it is best to test your circuit using different inputs to make sure you don't have any missed logic.
 
 pub struct CircuitScaffold<T, Fn> {
     f: Fn,

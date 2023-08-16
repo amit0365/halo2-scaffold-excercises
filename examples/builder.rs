@@ -15,6 +15,12 @@ use halo2_scaffold::scaffold::cmd::Cli;
 use halo2_scaffold::scaffold::run_builder_on_inputs;
 use rand::rngs::OsRng;
 
+// public inputs:
+// * A non-negative integer x, which is guaranteed to be at most 16-bits
+
+// public outputs:
+// * The non-negative integer (x / 32), where "/" represents integer division.
+
 // this algorithm takes a public input x, computes x^2 + 72, and outputs the result as public output
 fn some_algorithm_in_zk<F: ScalarField>(
     builder: &mut GateThreadBuilder<F>,
@@ -24,7 +30,8 @@ fn some_algorithm_in_zk<F: ScalarField>(
     // can still get a Context via:
     let ctx = builder.main(0); // 0 means FirstPhase, don't worry about it
 
-    // `Context` can roughly be thought of as a single-threaded execution trace of a program we want to ZK prove. We do some post-processing on `Context` to optimally divide the execution trace into multiple columns in a PLONKish arithmetization
+    // `Context` can roughly be thought of as a single-threaded execution trace of a program we want to ZK prove. 
+    // We do some post-processing on `Context` to optimally divide the execution trace into multiple columns in a PLONKish arithmetization
     // More advanced usage with multi-threaded witness generation is possible, but we do not explain it here
 
     // first we load a number `x` into as system, as a "witness"
@@ -52,7 +59,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
     make_public.push(out);
     // ==== way 2 =======
     // here is a more optimal way to compute x^2 + 72 using the lower level `assign_region` API:
-    let val = *x.value() * x.value() + c;
+    let val = *x.value() * *x.value() + c;
     let _val_assigned =
         ctx.assign_region_last([Constant(c), Existing(x), Existing(x), Witness(val)], [0]);
     // the `[0]` tells us to turn on a vertical `a + b * c = d` gate at row position 0.
@@ -64,7 +71,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
 
     println!("x: {:?}", x.value());
     println!("val_assigned: {:?}", out.value());
-    assert_eq!(*x.value() * x.value() + c, *out.value());
+    assert_eq!(*x.value() * *x.value() + c, *out.value());
 }
 
 fn main() {

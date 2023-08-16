@@ -1,5 +1,5 @@
 use clap::Parser;
-use halo2_base::gates::{GateChip, GateInstructions};
+use halo2_base::gates::{GateChip, GateInstructions, RangeChip, RangeInstructions};
 use halo2_base::halo2_proofs::halo2curves::bn256::Fr;
 use halo2_base::utils::ScalarField;
 use halo2_base::AssignedValue;
@@ -11,15 +11,23 @@ use halo2_base::{
 use halo2_scaffold::scaffold::cmd::Cli;
 use halo2_scaffold::scaffold::run;
 use serde::{Deserialize, Serialize};
+use std::env::var;
+use num_bigint::BigUint;
 //use halo2_scaffold::scaffold::{mock};
 //use rand::rngs::OsRng;
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
     pub x: String, // field element, but easier to deserialize as a string
 }
 
-// this algorithm takes a public input x, computes x^2 + 72, and outputs the result as public output
+// public inputs:
+// * A non-negative integer x, which is guaranteed to be at most 16-bits
+
+// public outputs:
+// * The non-negative integer (x / 32), where "/" represents integer division.
+
 fn some_algorithm_in_zk<F: ScalarField>(
     ctx: &mut Context<F>,
     input: CircuitInput,
@@ -31,43 +39,33 @@ fn some_algorithm_in_zk<F: ScalarField>(
     // More advanced usage with multi-threaded witness generation is possible, but we do not explain it here
 
     // first we load a number `x` into as system, as a "witness"
-    let x = ctx.load_witness(x);
+    let a = ctx.load_witness(x);
     // by default, all numbers in the system are private
     // we can make it public like so:
-    make_public.push(x);
+    make_public.push(a);
 
-    // create a Gate chip that contains methods for basic arithmetic operations
-    let gate = GateChip::<F>::default();
+    let b: BigUint = BigUint::from(32u32);
 
-    // ===== way 1 =====
-    // now we can perform arithmetic operations almost like a normal program using halo2-lib API functions
-    // square x
-    let x_sq = gate.mul(ctx, x, x);
+    let lookup_bits: usize =
+    var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
 
-    // x^2 + 72
-    let c = F::from(72);
-    // the implicit type of most variables is an "Existing" assigned value
-    // a known constant is a separate type that we specify by `Constant(c)`:
-    let out = gate.add(ctx, x_sq, Constant(c));
-    // Halo2 does not distinguish between public inputs vs outputs because the verifier seems them all at the same time
-    // However in traditional terms, `out` is our output number. It is currently still private.
-    // Let's make it public:
-    make_public.push(out);
+    let chip: RangeChip<F> = RangeChip::default(lookup_bits);
+    let (q,r) = chip.div_mod(ctx, a, b, 16);
+
+    make_public.push(q);
+
     // ==== way 2 =======
     // here is a more optimal way to compute x^2 + 72 using the lower level `assign_region` API:
-    let val = *x.value() * x.value() + c;
-    let _val_assigned =
-        ctx.assign_region_last([Constant(c), Existing(x), Existing(x), Witness(val)], [0]);
+    // let val = *x.value() * x.value() + c;
+    // let _val_assigned =
+    //     ctx.assign_region_last([Constant(c), Existing(x), Existing(x), Witness(val)], [0]);
     // the `[0]` tells us to turn on a vertical `a + b * c = d` gate at row position 0.
     // this imposes the constraint c + x * x = val
 
-    // ==== way 3 ======
-    // this does the exact same thing as way 2, but with a pre-existing function
-    let _val_assigned = gate.mul_add(ctx, x, x, Constant(c));
+    println!("a: {:?}", a.value());
+    println!("div: {:?}", q.value());
+    assert_eq!(F::from(32) * q.value() + r.value(), *a.value());
 
-    println!("x: {:?}", x.value());
-    println!("val_assigned: {:?}", out.value());
-    assert_eq!(*x.value() * x.value() + c, *out.value());
 }
 
 fn main() {
